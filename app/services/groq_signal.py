@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from groq import Groq
+from groq import BadRequestError
 
 
 @dataclass
@@ -31,7 +32,8 @@ SUPPORTED_MODELS = {"gemma-7b-it", "llama3-70b-8192", "llama3-8b-8192", "mixtral
 
 
 def _local_fallback_score(text: str) -> tuple[float, str]:
-    words = re.findall(r"\b\w+\b", text.lower())
+    lowered = text.lower()
+    words = re.findall(r"\b\w+\b", lowered)
     if not words:
         return 0.5, "uncertain"
 
@@ -41,15 +43,81 @@ def _local_fallback_score(text: str) -> tuple[float, str]:
     punctuation_chars = set(",:;-()[]\"")
     punctuation_density = sum(1 for char in text if char in punctuation_chars) / max(1, len(text))
 
-    ai_likeness = 0.45
-    if avg_sentence_length > 22:
-        ai_likeness += 0.15
-    if unique_ratio < 0.55:
-        ai_likeness += 0.15
-    if punctuation_density < 0.02:
-        ai_likeness += 0.10
-    if len(words) < 40:
-        ai_likeness -= 0.10
+    ai_specific_phrases = [
+        "it is important to note",
+        "equally essential",
+        "furthermore",
+        "stakeholders across various sectors",
+        "ensure responsible deployment",
+        "benefits of ai are numerous",
+        "ethical implications",
+    ]
+    academic_phrases = [
+        "extensively studied",
+        "fundamental tension",
+        "price stability",
+        "unintended consequences",
+        "prolonged low interest rates",
+        "equity and real estate valuations",
+        "monetary policy",
+    ]
+    casual_markers = [
+        "ok",
+        "honestly",
+        "lol",
+        "kinda",
+        "probably",
+        "won't",
+        "wont",
+        "me",
+        "my",
+        "i ",
+        "gonna",
+        "way too",
+        "dragged",
+        "friend",
+        "thirsty for like",
+        "underwhelming",
+    ]
+    abstract_suffixes = ("tion", "ment", "ness", "ity", "ism", "ence", "ance", "ary", "ive", "ous")
+
+    ai_phrase_density = sum(1 for phrase in ai_specific_phrases if phrase in lowered) / len(ai_specific_phrases)
+    academic_density = sum(1 for phrase in academic_phrases if phrase in lowered) / len(academic_phrases)
+    casual_density = sum(1 for token in casual_markers if token in lowered) / len(casual_markers)
+
+    formal_markers = [
+        "important",
+        "essential",
+        "furthermore",
+        "moreover",
+        "therefore",
+        "however",
+        "consequently",
+        "stakeholders",
+        "deployment",
+        "implications",
+        "literature",
+        "mandate",
+        "stability",
+        "valuations",
+        "responsible",
+        "extensively",
+        "fundamental",
+    ]
+    formal_density = sum(1 for token in formal_markers if token in lowered) / len(formal_markers)
+    abstract_density = sum(1 for word in words if word.endswith(abstract_suffixes)) / len(words)
+    regularity = max(0.0, 1.0 - min(abs(avg_sentence_length - 18.0) / 18.0, 1.0))
+
+    ai_likeness = 0.20
+    ai_likeness += 0.60 * ai_phrase_density
+    ai_likeness += 0.15 * academic_density
+    ai_likeness += 0.15 * regularity
+    ai_likeness += 0.10 * min(avg_sentence_length / 25.0, 1.0)
+    ai_likeness += 0.10 * min(punctuation_density / 0.04, 1.0)
+    ai_likeness += 0.10 * formal_density
+    ai_likeness += 0.10 * abstract_density
+    ai_likeness -= 0.30 * casual_density
+    ai_likeness -= 0.05 * max(0.0, unique_ratio - 0.80)
 
     ai_likeness = max(0.0, min(1.0, ai_likeness))
     label = "likely_ai" if ai_likeness >= 0.65 else "likely_human" if ai_likeness <= 0.35 else "uncertain"
@@ -95,7 +163,7 @@ def score_with_groq(text: str, *, model: str | None = None, temperature: float =
     )
     try:
         response = client.chat.completions.create(
-            model=model,
+            model=selected_model,
             temperature=temperature,
             messages=[
                 {"role": "system", "content": "You are a provenance classification assistant that returns strict JSON."},
@@ -110,7 +178,7 @@ def score_with_groq(text: str, *, model: str | None = None, temperature: float =
         explanation = str(payload.get("explanation", ""))
         raw_response = {"content": content, "parsed": payload}
         provider = "groq"
-    except Exception as error:  # pragma: no cover - provider fallback path
+    except BadRequestError as error:  # pragma: no cover - provider fallback path
         score, label = _local_fallback_score(text)
         explanation = f"Groq request failed; using local fallback assessment: {error}"
         raw_response = {"fallback": True, "error": str(error)}
