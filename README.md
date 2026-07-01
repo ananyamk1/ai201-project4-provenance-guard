@@ -47,6 +47,26 @@ Why this signal: human writing usually varies more in rhythm and punctuation, wh
 
 What it misses: formal human writing, edited drafts, templates, and technical prose can look mechanically regular even when people wrote them. In real deployment, I would tune this against a larger, labeled dataset and likely add document-length normalization.
 
+### Signal 3: Structured metadata signal
+
+This signal measures how complete and internally consistent the structured metadata is: title length, description balance, tag richness, and field completeness. It returns a `metadata_score` from `0.0` to `1.0`, where `1.0` means more AI-like.
+
+Why this signal: it gives the ensemble a third, distinct view that is based on structure rather than prose alone. That helps when the submission is not pure text, such as an image description or a structured metadata payload.
+
+What it misses: a carefully prepared human submission can still look highly structured, and sparse metadata can be noisy. In production I would calibrate it against actual submission metadata rather than the synthetic fields used here.
+
+## Ensemble Detection
+
+The ensemble combines three signals:
+
+- Groq LLM classifier: `45%`
+- Stylometric heuristics: `35%`
+- Structured metadata signal: `20%`
+
+The signals are combined into one AI-likeness score. If any pair of signals disagrees by more than `0.35`, the combined score gets a `0.10` penalty before clamping. That keeps one signal from dominating when the others strongly disagree.
+
+The submission response shows all three signal scores alongside the combined result, so the ensemble is visible rather than hidden.
+
 ## Confidence Scoring
 
 The combined score follows the spec directly:
@@ -82,6 +102,12 @@ The label is deliberately phrased as guidance, not proof. That wording is part o
 Appeals are filed by the original creator or submitter. The endpoint accepts `content_id` and `creator_reasoning`, plus optional creator identity metadata when available. On receipt, the system looks up the original decision, appends a new audit entry, and marks the item `under_review`.
 
 The reviewer-facing record includes the content id, original attribution, confidence, both signal scores, the original decision snapshot, the appeal reasoning, and the new `under_review` state. I kept the workflow append-only so the original classification remains visible and the appeal is traceable instead of destructive.
+
+## Provenance Certificate
+
+The app issues a lightweight provenance certificate code with each submission. A creator verifies the certificate by POSTing the `content_id` and matching `certificate_code` back to the API. That verification step records a separate audit entry with the label `Verified provenance certificate` so it is visibly different from the standard transparency label.
+
+This is intentionally simple: the project is demonstrating the workflow and the visible verified state, not building a production-grade identity system.
 
 ## Rate Limiting
 
@@ -134,6 +160,12 @@ The project includes a lightweight analytics view at `GET /analytics`. It summar
 - average confidence
 
 This is a JSON dashboard rather than a chart UI, but it still exposes the operational picture the rubric asks for: how often the system is leaning AI, how often creators appeal, and how confident the system is overall.
+
+## Multi-Modal Support
+
+The submission endpoint accepts `content_type: "metadata"` plus a structured `metadata` object for non-text content. The pipeline converts that payload into a canonical summary string for the text-based signals and also runs the structured metadata signal directly on the JSON fields. That keeps the same attribution pipeline usable for image descriptions or other structured content.
+
+In other words, the multimodal path still ends in the same ensemble result, but it feeds the signals differently: text goes through the prose-based signals, while structured metadata also contributes its own score.
 
 ## Known Limitations
 
