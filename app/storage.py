@@ -144,6 +144,19 @@ def list_audit_entries(limit: int = 20) -> list[dict]:
     return [json.loads(row["payload_json"]) for row in rows]
 
 
+def list_all_audit_entries() -> list[dict]:
+    with db_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT payload_json
+            FROM audit_log
+            ORDER BY id DESC
+            """
+        )
+        rows = cursor.fetchall()
+    return [json.loads(row["payload_json"]) for row in rows]
+
+
 
 def get_recent_entries(limit: int = 20) -> list[dict]:
     return list_audit_entries(limit)

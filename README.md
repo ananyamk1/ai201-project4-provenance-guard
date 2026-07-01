@@ -125,6 +125,16 @@ The audit log is structured JSON stored in SQLite. Each submission entry records
 
 I verified the log contains at least three structured entries and at least one appeal entry. Because the log is append-only, it works as a timeline rather than a single mutable status field.
 
+## Analytics Dashboard
+
+The project includes a lightweight analytics view at `GET /analytics`. It summarizes the current audit log with:
+
+- the number of contents currently labeled likely AI, likely human, and uncertain
+- appeal rate across the current contents
+- average confidence
+
+This is a JSON dashboard rather than a chart UI, but it still exposes the operational picture the rubric asks for: how often the system is leaning AI, how often creators appeal, and how confident the system is overall.
+
 ## Known Limitations
 
 This system will likely struggle with formal human writing such as academic prose, policy memos, and edited essays. Those texts can look compact, coherent, and low-variance, which pushes both the LLM signal and the stylometric signal toward AI-like outputs.

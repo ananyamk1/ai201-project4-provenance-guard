@@ -8,7 +8,7 @@ from .extensions import limiter
 from .services.groq_signal import score_with_groq
 from .services.scoring import combine_signal_scores
 from .services.stylometry import score_with_stylometry
-from .storage import append_appeal_entry, get_latest_entry, get_recent_entries, insert_audit_entry, make_timestamp
+from .storage import append_appeal_entry, get_latest_entry, get_recent_entries, insert_audit_entry, list_all_audit_entries, make_timestamp
 
 api = Blueprint("api", __name__)
 
@@ -134,3 +134,30 @@ def log_entries():
 @api.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
+
+
+@api.route("/analytics", methods=["GET"])
+def analytics():
+    entries = list_all_audit_entries()
+    latest_by_content = {}
+    for entry in entries:
+        content_id = entry.get("content_id")
+        if content_id and content_id not in latest_by_content:
+            latest_by_content[content_id] = entry
+
+    current_entries = list(latest_by_content.values())
+    total = len(current_entries)
+    ai_likely = sum(1 for entry in current_entries if entry.get("attribution") == "likely_ai")
+    human_likely = sum(1 for entry in current_entries if entry.get("attribution") == "likely_human")
+    uncertain = sum(1 for entry in current_entries if entry.get("attribution") == "uncertain")
+    appeal_count = sum(1 for entry in current_entries if entry.get("status") == "under_review")
+    average_confidence = sum(float(entry.get("confidence", 0.0)) for entry in current_entries) / total if total else 0.0
+
+    return jsonify({
+        "total_contents": total,
+        "ai_likely": ai_likely,
+        "human_likely": human_likely,
+        "uncertain": uncertain,
+        "appeal_rate": round(appeal_count / total, 3) if total else 0.0,
+        "average_confidence": round(average_confidence, 3),
+    }), 200
