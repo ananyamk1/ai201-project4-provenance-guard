@@ -4,14 +4,16 @@ from uuid import uuid4
 
 from flask import Blueprint, jsonify, request
 
+from .extensions import limiter
 from .services.groq_signal import score_with_groq
 from .services.scoring import combine_signal_scores
 from .services.stylometry import score_with_stylometry
-from .storage import get_recent_entries, insert_audit_entry, make_timestamp
+from .storage import append_appeal_entry, get_latest_entry, get_recent_entries, insert_audit_entry, make_timestamp
 
 api = Blueprint("api", __name__)
 
 @api.route("/submit", methods=["POST"])
+@limiter.limit("10 per minute;100 per day")
 def submit():
     payload = request.get_json(silent=True) or {}
     text = payload.get("text")
@@ -73,6 +75,50 @@ def submit():
         "appeal_available": True,
     }
     return jsonify(response), 200
+
+
+@api.route("/appeal", methods=["POST"])
+@limiter.limit("5 per hour")
+def appeal():
+    payload = request.get_json(silent=True) or {}
+    content_id = payload.get("content_id")
+    creator_reasoning = payload.get("creator_reasoning")
+    creator_id = payload.get("creator_id") or payload.get("requester_name") or ""
+
+    if not isinstance(content_id, str) or not content_id.strip():
+        return jsonify({"error": "content_id is required"}), 400
+    if not isinstance(creator_reasoning, str) or not creator_reasoning.strip():
+        return jsonify({"error": "creator_reasoning is required"}), 400
+
+    original_entry = get_latest_entry(content_id.strip())
+    if original_entry is None:
+        return jsonify({"error": "content_id not found"}), 404
+
+    appeal_id = str(uuid4())
+    appeal_entry = {
+        "appeal_id": appeal_id,
+        "content_id": content_id.strip(),
+        "creator_id": creator_id,
+        "creator_reasoning": creator_reasoning.strip(),
+        "timestamp": make_timestamp(),
+        "attribution": original_entry.get("attribution", "under_review"),
+        "confidence": original_entry.get("confidence", 0.0),
+        "llm_score": original_entry.get("llm_score", 0.0),
+        "style_score": original_entry.get("style_score", 0.0),
+        "combined_ai_score": original_entry.get("combined_ai_score", 0.0),
+        "status": "under_review",
+        "appeal_reasoning": creator_reasoning.strip(),
+        "appeal_filed": True,
+        "original_decision": original_entry,
+    }
+    append_appeal_entry(appeal_entry)
+
+    return jsonify({
+        "appeal_id": appeal_id,
+        "content_id": content_id.strip(),
+        "status": "under_review",
+        "message": "Appeal received and marked under review.",
+    }), 200
 
 
 @api.route("/log", methods=["GET"])

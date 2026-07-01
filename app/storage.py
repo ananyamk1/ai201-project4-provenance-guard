@@ -90,8 +90,46 @@ def insert_audit_entry(entry: dict) -> None:
         )
 
 
+def get_latest_entry(content_id: str) -> dict | None:
+    with db_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT payload_json
+            FROM audit_log
+            WHERE content_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (content_id,),
+        )
+        row = cursor.fetchone()
+    return json.loads(row["payload_json"]) if row else None
 
-def get_recent_entries(limit: int = 20) -> list[dict]:
+
+def append_appeal_entry(appeal_entry: dict) -> None:
+    payload = json.dumps(appeal_entry, ensure_ascii=True)
+    with db_cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO audit_log (
+                content_id, creator_id, timestamp, attribution,
+                confidence, llm_score, status, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                appeal_entry["content_id"],
+                appeal_entry.get("creator_id", ""),
+                appeal_entry["timestamp"],
+                appeal_entry["attribution"],
+                appeal_entry["confidence"],
+                appeal_entry["llm_score"],
+                appeal_entry["status"],
+                payload,
+            ),
+        )
+
+
+def list_audit_entries(limit: int = 20) -> list[dict]:
     with db_cursor() as cursor:
         cursor.execute(
             """
@@ -104,3 +142,8 @@ def get_recent_entries(limit: int = 20) -> list[dict]:
         )
         rows = cursor.fetchall()
     return [json.loads(row["payload_json"]) for row in rows]
+
+
+
+def get_recent_entries(limit: int = 20) -> list[dict]:
+    return list_audit_entries(limit)
